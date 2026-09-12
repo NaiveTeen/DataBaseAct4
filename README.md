@@ -26,13 +26,82 @@ Base de datos MySQL para el proyecto de **Acuática del Golfo S.A.**, empresa de
 
 > ⚠️ **Antes de usar en producción**, cambia las contraseñas de los usuarios definidas en `02_privilegios.sql` — están en texto plano como valores de ejemplo.
 
+## Qué resuelve esta base de datos
+
+Acuática del Golfo mide manualmente la temperatura, pH, oxígeno disuelto y salinidad de sus estanques, lo que retrasa detectar problemas (ej. baja oxigenación) y causa pérdidas económicas. Esta base de datos centraliza esos parámetros para que un dashboard pueda mostrarlos en tiempo real y generar alertas automáticas, en vez de depender de revisiones visuales manuales.
+
 ## Estructura de las tablas
 
-- **`estanques`** — Catálogo de estanques de cultivo (nombre, tipo de cultivo, capacidad).
-- **`sensores`** — Sensores instalados por estanque, uno por parámetro medido.
-- **`lecturas`** — Histórico de mediciones de cada sensor (la tabla principal para estadísticas).
-- **`alertas`** — Alertas generadas cuando un parámetro sale de rango seguro.
-- **`usuarios`** — Usuarios de la aplicación (operario, supervisor, administrador).
+### `estanques`
+Catálogo de los estanques físicos de la granja.
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `id` | INT (PK) | Identificador único del estanque |
+| `nombre` | VARCHAR(50) | Nombre del estanque (ej. "Estanque A1") |
+| `tipo_cultivo` | ENUM | `'tilapia'` o `'camaron'` |
+| `capacidad_m3` | DECIMAL | Volumen del estanque en metros cúbicos |
+| `fecha_alta` | DATE | Fecha en que el estanque entró en operación |
+
+### `sensores`
+Qué sensor mide qué parámetro, en qué estanque. Cada estanque tiene 4 sensores (uno por parámetro).
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `id` | INT (PK) | Identificador único del sensor |
+| `estanque_id` | INT (FK → `estanques.id`) | A qué estanque pertenece |
+| `parametro` | ENUM | `'temperatura'`, `'ph'`, `'oxigeno_disuelto'` o `'salinidad'` |
+| `modelo` | VARCHAR(50) | Modelo del sensor físico |
+| `fecha_instalacion` | DATE | Fecha en que se instaló |
+
+### `lecturas`
+El histórico de mediciones — es la tabla más grande y la que alimenta las gráficas del dashboard.
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `id` | INT (PK) | Identificador único de la lectura |
+| `sensor_id` | INT (FK → `sensores.id`) | Qué sensor generó el dato |
+| `estanque_id` | INT (FK → `estanques.id`) | En qué estanque se tomó (redundante a propósito, para consultas más rápidas) |
+| `valor` | DECIMAL(6,2) | El valor medido (unidad según el parámetro del sensor) |
+| `fecha_hora` | DATETIME | Momento exacto de la medición |
+
+### `alertas`
+Se generan cuando un parámetro sale de su rango seguro.
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `id` | INT (PK) | Identificador único de la alerta |
+| `estanque_id` | INT (FK → `estanques.id`) | En qué estanque ocurrió |
+| `parametro` | ENUM | Qué parámetro causó la alerta |
+| `valor_detectado` | DECIMAL(6,2) | El valor que disparó la alerta |
+| `nivel` | ENUM | `'bajo'`, `'medio'` o `'critico'` |
+| `mensaje` | VARCHAR(150) | Descripción legible de la alerta |
+| `fecha_hora` | DATETIME | Cuándo se generó |
+| `atendida` | BOOLEAN | Si ya fue resuelta por un operario |
+
+### `usuarios`
+Personas que usarían la aplicación (no confundir con los usuarios de MySQL, ver más abajo).
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `id` | INT (PK) | Identificador único |
+| `nombre` | VARCHAR(80) | Nombre completo |
+| `email` | VARCHAR(100) | Correo (único) |
+| `rol` | ENUM | `'operario'`, `'supervisor'` o `'administrador'` |
+| `fecha_alta` | DATE | Fecha de registro |
+
+### Cómo se relacionan las tablas
+
+```
+estanques (1) ───< (N) sensores (1) ───< (N) lecturas
+    │
+    └──────────────< (N) alertas
+```
+
+- Un **estanque** tiene varios **sensores** (uno por parámetro).
+- Un **sensor** genera muchas **lecturas** a lo largo del tiempo.
+- Un **estanque** puede generar varias **alertas**, sin pasar por un sensor específico (la alerta ya trae el parámetro y valor directamente).
+- `usuarios` es independiente — no tiene llave foránea hacia las demás tablas todavía; se usaría más adelante si se agrega inicio de sesión o registro de "quién atendió qué alerta".
 
 ## Datos de ejemplo incluidos
 
@@ -136,6 +205,9 @@ WHERE fecha_hora < DATE_SUB(NOW(), INTERVAL 30 DAY);
 
 Esta base de datos corresponde a los siguientes componentes del backend del SMA:
 
+- **MAD (Módulo de Adquisición de Datos)** → tablas `sensores` y `lecturas`, patrón **Observer** (la UI se suscribe al flujo de datos).
+- **MPD (Módulo de Procesamiento)** → tabla `alertas`, patrón **Strategy** (la lógica de alerta es configurable).
+- **DB (Base de Datos)** → histórico completo para gráficas y reportes, patrón **Modelo** (MVC/MVVM del frontend).
 - **MAD (Módulo de Adquisición de Datos)** → tablas `sensores` y `lecturas`, patrón **Observer** (la UI se suscribe al flujo de datos).
 - **MPD (Módulo de Procesamiento)** → tabla `alertas`, patrón **Strategy** (la lógica de alerta es configurable).
 - **DB (Base de Datos)** → histórico completo para gráficas y reportes, patrón **Modelo** (MVC/MVVM del frontend).
